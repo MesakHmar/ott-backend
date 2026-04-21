@@ -19,21 +19,23 @@ app.post("/telegram", async (req, res) => {
 
     if (!msg) return res.sendStatus(200);
 
-    if (msg.video) {
-      const file_id = msg.video.file_id;
+    // ✅ SUPPORT BOTH video AND document
+    const media = msg.video || msg.document;
+
+    if (media) {
+      const file_id = media.file_id;
 
       const id = Date.now().toString();
       db[id] = file_id;
 
-      // movie name (caption OR file name)
+      // 🎬 movie name (caption OR filename)
       const movieName =
         msg.caption ||
-        msg.video.file_name ||
+        media.file_name ||
         "Untitled Movie";
 
       const link = `https://ott-backend-5iwy.onrender.com/watch/${id}`;
 
-      // send reply to Telegram
       await axios.get(
         `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
         {
@@ -60,12 +62,13 @@ app.get("/watch/:id", async (req, res) => {
     const file_id = db[req.params.id];
     if (!file_id) return res.send("Not found");
 
-    // get file path from Telegram
     const tg = await axios.get(
       `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${file_id}`
     );
 
-    const url = `https://api.telegram.org/file/bot${BOT_TOKEN}/${tg.data.result.file_path}`;
+    const filePath = tg.data.result.file_path;
+
+    const url = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
 
     const response = await axios({
       url,
@@ -86,8 +89,6 @@ app.get("/", (req, res) => {
   res.send("OTT Backend Running");
 });
 
-// =======================
-// START SERVER
 // =======================
 app.listen(process.env.PORT || 3000, () => {
   console.log("Server running");
