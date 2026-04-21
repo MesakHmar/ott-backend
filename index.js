@@ -6,27 +6,24 @@ const app = express();
 app.use(express.json());
 
 // =======================
-// ENV VARIABLES
+// ENV
 // =======================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URL = process.env.MONGO_URL;
 
 // =======================
-// CHECK ENV (prevents silent crash)
+// MONGODB CONNECT
 // =======================
-if (!BOT_TOKEN || !MONGO_URL) {
-  console.log("Missing BOT_TOKEN or MONGO_URL");
+if (!MONGO_URL) {
+  console.log("❌ MONGO_URL missing");
+} else {
+  mongoose.connect(MONGO_URL)
+    .then(() => console.log("MongoDB Connected"))
+    .catch(err => console.log("Mongo Error:", err.message));
 }
 
 // =======================
-// CONNECT MONGODB
-// =======================
-mongoose.connect(MONGO_URL)
-  .then(() => console.log("MongoDB Connected"))
-  .catch(err => console.log("Mongo Error:", err.message));
-
-// =======================
-// DATABASE SCHEMA
+// SCHEMA
 // =======================
 const movieSchema = new mongoose.Schema({
   file_id: String,
@@ -87,9 +84,7 @@ app.get("/watch/:id", async (req, res) => {
   try {
     const movie = await Movie.findById(req.params.id);
 
-    if (!movie) {
-      return res.status(404).send("Not found");
-    }
+    if (!movie) return res.status(404).send("Not found");
 
     const tg = await axios.get(
       `https://api.telegram.org/bot${BOT_TOKEN}/getFile`,
@@ -124,10 +119,6 @@ app.get("/", (req, res) => {
 });
 
 // =======================
-// START SERVER
-// =======================
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+app.listen(process.env.PORT || 3000, () => {
+  console.log("Server running");
 });
