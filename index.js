@@ -26,10 +26,13 @@ const R2_PUBLIC_URL = "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 // ================= DB =================
 mongoose.connect(MONGO_URL);
 
-const Movie = mongoose.model("Movie", new mongoose.Schema({
-  key: String,
-  name: String
-}));
+const Movie = mongoose.model(
+  "Movie",
+  new mongoose.Schema({
+    key: String,
+    name: String
+  })
+);
 
 // ================= TELEGRAM CLIENT =================
 const client = new TelegramClient(
@@ -41,7 +44,7 @@ const client = new TelegramClient(
 
 (async () => {
   await client.connect();
-  console.log("✅ Telegram Connected");
+  console.log("✅ Telegram MTProto Connected");
 })();
 
 // ================= TELEGRAM WEBHOOK =================
@@ -61,7 +64,7 @@ app.post("/telegram", async (req, res) => {
       ids: msg.message_id
     });
 
-    // ================= FIXED DOWNLOAD (STREAM SAFE) =================
+    // ================= SAFE STREAM DOWNLOAD =================
     const stream = await client.downloadMedia(messages[0], {
       asStream: true
     });
@@ -75,7 +78,10 @@ app.post("/telegram", async (req, res) => {
 
     console.log("⬆ Uploading to R2...");
 
-    const key = `${Date.now()}-${Math.random().toString(36).substring(2)}-${fileName}`;
+    // ================= UNIQUE KEY =================
+    const key = `${Date.now()}-${Math.random()
+      .toString(36)
+      .substring(2)}-${fileName}`;
 
     await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
@@ -91,7 +97,10 @@ app.post("/telegram", async (req, res) => {
 
     console.log("✅ Uploaded:", key);
 
-    const saved = await Movie.create({ key, name: fileName });
+    const saved = await Movie.create({
+      key,
+      name: fileName
+    });
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
@@ -104,7 +113,6 @@ app.post("/telegram", async (req, res) => {
     );
 
     res.sendStatus(200);
-
   } catch (err) {
     console.log("❌ ERROR:", err.message);
     res.sendStatus(200);
@@ -128,8 +136,18 @@ app.get("/watch/:id", async (req, res) => {
         <title>${movie.name}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
-          body { margin:0; background:black; display:flex; align-items:center; justify-content:center; height:100vh; }
-          video { width:100%; max-height:100vh; }
+          body {
+            margin: 0;
+            background: black;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+          }
+          video {
+            width: 100%;
+            max-height: 100vh;
+          }
         </style>
       </head>
       <body>
@@ -139,7 +157,6 @@ app.get("/watch/:id", async (req, res) => {
       </body>
       </html>
     `);
-
   } catch (err) {
     console.log("STREAM ERROR:", err.message);
     res.status(500).send("Stream error");
