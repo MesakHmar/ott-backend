@@ -6,27 +6,34 @@ const app = express();
 app.use(express.json());
 
 // =======================
-// ENV
+// ENV VARIABLES
 // =======================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URL = process.env.MONGO_URL;
+
+// =======================
+// CHECK ENV (prevents silent crash)
+// =======================
+if (!BOT_TOKEN || !MONGO_URL) {
+  console.log("Missing BOT_TOKEN or MONGO_URL");
+}
 
 // =======================
 // CONNECT MONGODB
 // =======================
 mongoose.connect(MONGO_URL)
   .then(() => console.log("MongoDB Connected"))
-  .catch(err => console.log("Mongo Error:", err));
+  .catch(err => console.log("Mongo Error:", err.message));
 
 // =======================
-// DB MODEL
+// DATABASE SCHEMA
 // =======================
-const MovieSchema = new mongoose.Schema({
+const movieSchema = new mongoose.Schema({
   file_id: String,
   name: String
 });
 
-const Movie = mongoose.model("Movie", MovieSchema);
+const Movie = mongoose.model("Movie", movieSchema);
 
 // =======================
 // TELEGRAM WEBHOOK
@@ -48,13 +55,12 @@ app.post("/telegram", async (req, res) => {
       msg.document?.file_name ||
       "Untitled Movie";
 
-    // save to MongoDB
-    const movie = await Movie.create({
+    const saved = await Movie.create({
       file_id,
       name: movieName
     });
 
-    const link = `https://ott-backend-5iwy.onrender.com/watch/${movie._id}`;
+    const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
     await axios.get(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
@@ -118,8 +124,10 @@ app.get("/", (req, res) => {
 });
 
 // =======================
-// START
+// START SERVER
 // =======================
-app.listen(process.env.PORT || 3000, () => {
-  console.log("Server running");
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log("Server running on port", PORT);
 });
