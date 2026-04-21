@@ -20,8 +20,9 @@ const TG_API_ID = parseInt(process.env.TG_API_ID);
 const TG_API_HASH = process.env.TG_API_HASH;
 const TG_SESSION = process.env.TG_SESSION;
 
-// 🔥 R2 PUBLIC URL
-const R2_PUBLIC_URL = "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
+// ================= R2 PUBLIC URL =================
+const R2_PUBLIC_URL =
+  "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 
 // ================= DB =================
 mongoose.connect(MONGO_URL);
@@ -44,7 +45,7 @@ const client = new TelegramClient(
 
 (async () => {
   await client.connect();
-  console.log("✅ Telegram MTProto Connected");
+  console.log("✅ Telegram Connected");
 })();
 
 // ================= TELEGRAM WEBHOOK =================
@@ -58,13 +59,13 @@ app.post("/telegram", async (req, res) => {
 
     const fileName = file.file_name || "movie.mp4";
 
-    console.log("📥 Downloading from Telegram...");
+    console.log("📥 Downloading...");
 
     const messages = await client.getMessages(msg.chat.id, {
       ids: msg.message_id
     });
 
-    // ================= SAFE STREAM DOWNLOAD =================
+    // SAFE STREAM DOWNLOAD
     const stream = await client.downloadMedia(messages[0], {
       asStream: true
     });
@@ -78,7 +79,6 @@ app.post("/telegram", async (req, res) => {
 
     console.log("⬆ Uploading to R2...");
 
-    // ================= UNIQUE KEY =================
     const key = `${Date.now()}-${Math.random()
       .toString(36)
       .substring(2)}-${fileName}`;
@@ -97,10 +97,7 @@ app.post("/telegram", async (req, res) => {
 
     console.log("✅ Uploaded:", key);
 
-    const saved = await Movie.create({
-      key,
-      name: fileName
-    });
+    const saved = await Movie.create({ key, name: fileName });
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
