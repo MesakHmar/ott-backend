@@ -1,9 +1,8 @@
 const express = require("express");
 const axios = require("axios");
 const mongoose = require("mongoose");
-const fs = require("fs");
-const path = require("path");
 
+const { PassThrough } = require("stream");
 const { TelegramClient } = require("telegram");
 const { StringSession } = require("telegram/sessions");
 
@@ -67,36 +66,22 @@ app.post("/telegram", async (req, res) => {
       ids: msg.message_id
     });
 
-    const stream = await client.downloadMedia(messages[0], {
+    const tgStream = await client.downloadMedia(messages[0], {
       asStream: true
     });
 
-    // ================= SAVE TEMP FILE =================
-    const tempPath = path.join(
-      "/tmp",
-      `${Date.now()}-${fileName}`
-    );
-
-    const writeStream = fs.createWriteStream(tempPath);
-
-    await new Promise((resolve, reject) => {
-      stream.pipe(writeStream);
-      stream.on("error", reject);
-      writeStream.on("finish", resolve);
-      writeStream.on("error", reject);
-    });
+    // ================= UNIQUE R2 KEY =================
+    const key = `${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}-${fileName}`;
 
     console.log("⬆ Uploading to R2...");
 
-    const key = `${Date.now()}-${Math.random()
-      .toString(36)
-      .substring(2)}-${fileName}`;
+    const uploadStream = new PassThrough();
 
-    const fileStream = fs.createReadStream(tempPath);
-
-    await axios.put(
+    const uploadPromise = axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
-      fileStream,
+      uploadStream,
       {
         headers: {
           Authorization: `Bearer ${CF_API_TOKEN}`,
@@ -105,6 +90,18 @@ app.post("/telegram", async (req, res) => {
         maxBodyLength: Infinity
       }
     );
+
+    // PIPE DIRECTLY (NO BUFFER, NO TEMP FILE)
+    tgStream.pipe(uploadStream);
+
+    const uploadRes = await uploadPromise;
+
+    console.log("UPLOAD RESPONSE:", uploadRes.data);
+
+    if (!uploadRes.data || uploadRes.data.success !== true) {
+      console.log("❌ R2 upload failed");
+      return res.sendStatus(200);
+    }
 
     console.log("✅ Uploaded:", key);
 
@@ -122,9 +119,6 @@ app.post("/telegram", async (req, res) => {
         text: `🎬 ${fileName}\n👉 ${link}`
       }
     );
-
-    // cleanup temp file
-    fs.unlinkSync(tempPath);
 
     res.sendStatus(200);
   } catch (err) {
