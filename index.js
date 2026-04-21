@@ -11,11 +11,8 @@ app.use(express.json());
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URL = process.env.MONGO_URL;
 
-console.log("Server starting...");
+console.log("🚀 Server starting...");
 
-// =======================
-// CHECK ENV
-// =======================
 if (!BOT_TOKEN) console.log("❌ BOT_TOKEN missing");
 if (!MONGO_URL) console.log("❌ MONGO_URL missing");
 
@@ -24,8 +21,8 @@ if (!MONGO_URL) console.log("❌ MONGO_URL missing");
 // =======================
 if (MONGO_URL) {
   mongoose.connect(MONGO_URL)
-    .then(() => console.log("MongoDB Connected"))
-    .catch(err => console.log("Mongo Error:", err.message));
+    .then(() => console.log("✅ MongoDB Connected"))
+    .catch(err => console.log("❌ Mongo Error:", err.message));
 }
 
 // =======================
@@ -86,15 +83,21 @@ app.post("/telegram", async (req, res) => {
 });
 
 // =======================
-// STREAM ROUTE (YOUR FIXED VERSION)
+// STREAM ROUTE (FIXED + DEBUG)
 // =======================
 app.get("/watch/:id", async (req, res) => {
   try {
     const movie = await Movie.findById(req.params.id);
 
-    console.log("MOVIE:", movie);
+    console.log("MOVIE FILE ID:", movie?.file_id);
 
-    if (!movie) return res.status(404).send("Not found");
+    if (!movie) {
+      return res.status(404).send("Movie not found");
+    }
+
+    if (!movie.file_id) {
+      return res.status(400).send("Missing file_id");
+    }
 
     const tg = await axios.get(
       `https://api.telegram.org/bot${BOT_TOKEN}/getFile`,
@@ -103,13 +106,15 @@ app.get("/watch/:id", async (req, res) => {
       }
     );
 
-    console.log("TG RESPONSE:", tg.data);
+    console.log("GETFILE RESPONSE:", JSON.stringify(tg.data, null, 2));
 
     if (!tg.data.ok) {
       return res.status(500).send("Telegram getFile failed");
     }
 
     const filePath = tg.data.result.file_path;
+
+    console.log("FILE PATH:", filePath);
 
     const fileUrl =
       `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
@@ -119,6 +124,10 @@ app.get("/watch/:id", async (req, res) => {
     const response = await axios({
       url: fileUrl,
       responseType: "stream"
+    });
+
+    response.data.on("error", (err) => {
+      console.log("STREAM PIPE ERROR:", err.message);
     });
 
     res.setHeader("Content-Type", "video/mp4");
