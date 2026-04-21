@@ -6,7 +6,7 @@ const app = express();
 app.use(express.json());
 
 // =======================
-// ENV
+// ENV VARIABLES
 // =======================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URL = process.env.MONGO_URL;
@@ -37,20 +37,24 @@ const movieSchema = new mongoose.Schema({
 const Movie = mongoose.model("Movie", movieSchema);
 
 // =======================
-// WEBHOOK (FIXED)
+// TELEGRAM WEBHOOK (DEBUG + FIXED)
 // =======================
 app.post("/telegram", async (req, res) => {
   try {
+    console.log("📩 UPDATE RECEIVED:", JSON.stringify(req.body));
+
     const msg =
       req.body.message ||
-      req.body.edited_message ||
-      req.body.channel_post;
+      req.body.channel_post ||
+      req.body.edited_message;
 
     if (!msg) return res.sendStatus(200);
 
     const file_id =
       msg.video?.file_id ||
       msg.document?.file_id;
+
+    console.log("📌 FILE ID:", file_id);
 
     if (!file_id) return res.sendStatus(200);
 
@@ -67,6 +71,8 @@ app.post("/telegram", async (req, res) => {
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
+    console.log("🔗 GENERATED LINK:", link);
+
     await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
@@ -78,7 +84,7 @@ app.post("/telegram", async (req, res) => {
     res.sendStatus(200);
 
   } catch (err) {
-    console.log("Webhook error:", err.message);
+    console.log("❌ WEBHOOK ERROR:", err.message);
     res.sendStatus(200);
   }
 });
