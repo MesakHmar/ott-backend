@@ -1,6 +1,8 @@
 const express = require("express");
 const axios = require("axios");
 const mongoose = require("mongoose");
+const fs = require("fs");
+const path = require("path");
 
 const { TelegramClient } = require("telegram");
 const { StringSession } = require("telegram/sessions");
@@ -20,7 +22,7 @@ const TG_API_ID = parseInt(process.env.TG_API_ID);
 const TG_API_HASH = process.env.TG_API_HASH;
 const TG_SESSION = process.env.TG_SESSION;
 
-// ================= R2 =================
+// ================= R2 PUBLIC URL =================
 const R2_PUBLIC_URL =
   "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 
@@ -35,7 +37,7 @@ const Movie = mongoose.model(
   })
 );
 
-// ================= TELEGRAM =================
+// ================= TELEGRAM CLIENT =================
 const client = new TelegramClient(
   new StringSession(TG_SESSION),
   TG_API_ID,
@@ -48,7 +50,7 @@ const client = new TelegramClient(
   console.log("✅ Telegram Connected");
 })();
 
-// ================= WEBHOOK =================
+// ================= TELEGRAM WEBHOOK =================
 app.post("/telegram", async (req, res) => {
   try {
     const msg = req.body.message || req.body.channel_post;
@@ -59,7 +61,7 @@ app.post("/telegram", async (req, res) => {
 
     const fileName = file.file_name || "movie.mp4";
 
-    console.log("📥 Downloading...");
+    console.log("📥 Downloading from Telegram...");
 
     const messages = await client.getMessages(msg.chat.id, {
       ids: msg.message_id
@@ -69,20 +71,32 @@ app.post("/telegram", async (req, res) => {
       asStream: true
     });
 
-    const chunks = [];
-    for await (const chunk of stream) chunks.push(chunk);
+    // ================= SAVE TEMP FILE =================
+    const tempPath = path.join(
+      "/tmp",
+      `${Date.now()}-${fileName}`
+    );
 
-    const buffer = Buffer.concat(chunks);
+    const writeStream = fs.createWriteStream(tempPath);
+
+    await new Promise((resolve, reject) => {
+      stream.pipe(writeStream);
+      stream.on("error", reject);
+      writeStream.on("finish", resolve);
+      writeStream.on("error", reject);
+    });
+
+    console.log("⬆ Uploading to R2...");
 
     const key = `${Date.now()}-${Math.random()
       .toString(36)
       .substring(2)}-${fileName}`;
 
-    console.log("⬆ Uploading...");
+    const fileStream = fs.createReadStream(tempPath);
 
     await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
-      buffer,
+      fileStream,
       {
         headers: {
           Authorization: `Bearer ${CF_API_TOKEN}`,
@@ -92,7 +106,12 @@ app.post("/telegram", async (req, res) => {
       }
     );
 
-    const saved = await Movie.create({ key, name: fileName });
+    console.log("✅ Uploaded:", key);
+
+    const saved = await Movie.create({
+      key,
+      name: fileName
+    });
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
@@ -104,14 +123,17 @@ app.post("/telegram", async (req, res) => {
       }
     );
 
+    // cleanup temp file
+    fs.unlinkSync(tempPath);
+
     res.sendStatus(200);
   } catch (err) {
-    console.log("ERROR:", err.message);
+    console.log("❌ ERROR:", err.message);
     res.sendStatus(200);
   }
 });
 
-// ================= PLAYER =================
+// ================= STREAM PLAYER =================
 app.get("/watch/:id", async (req, res) => {
   try {
     const movie = await Movie.findById(req.params.id);
