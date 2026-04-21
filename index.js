@@ -117,7 +117,6 @@ app.get("/watch/:id", async (req, res) => {
     if (!movie) return res.status(404).send("Not found");
 
     const publicUrl = `${https://pub-1032004a583a464caf18df15b07cda3c.r2.dev}/${movie.key}`;
-
     return res.redirect(publicUrl);
 
   } catch (err) {
