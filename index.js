@@ -41,7 +41,7 @@ const client = new TelegramClient(
 
 (async () => {
   await client.connect();
-  console.log("✅ Telegram MTProto Connected");
+  console.log("✅ Telegram Connected");
 })();
 
 // ================= TELEGRAM WEBHOOK =================
@@ -53,7 +53,7 @@ app.post("/telegram", async (req, res) => {
     const file = msg.video || msg.document;
     if (!file) return res.sendStatus(200);
 
-    const name = file.file_name || "movie.mp4";
+    const fileName = file.file_name || "movie.mp4";
 
     console.log("📥 Downloading from Telegram...");
 
@@ -61,11 +61,21 @@ app.post("/telegram", async (req, res) => {
       ids: msg.message_id
     });
 
-    const buffer = await client.downloadMedia(messages[0]);
+    // ================= FIXED DOWNLOAD (STREAM SAFE) =================
+    const stream = await client.downloadMedia(messages[0], {
+      asStream: true
+    });
 
-    const key = Date.now() + "-" + name;
+    const chunks = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+
+    const buffer = Buffer.concat(chunks);
 
     console.log("⬆ Uploading to R2...");
+
+    const key = `${Date.now()}-${Math.random().toString(36).substring(2)}-${fileName}`;
 
     await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
@@ -81,7 +91,7 @@ app.post("/telegram", async (req, res) => {
 
     console.log("✅ Uploaded:", key);
 
-    const saved = await Movie.create({ key, name });
+    const saved = await Movie.create({ key, name: fileName });
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
@@ -89,7 +99,7 @@ app.post("/telegram", async (req, res) => {
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
         chat_id: msg.chat.id,
-        text: `🎬 ${name}\n👉 ${link}`
+        text: `🎬 ${fileName}\n👉 ${link}`
       }
     );
 
@@ -101,7 +111,7 @@ app.post("/telegram", async (req, res) => {
   }
 });
 
-// ================= STREAM PLAYER (FIXED) =================
+// ================= STREAM PLAYER =================
 app.get("/watch/:id", async (req, res) => {
   try {
     const movie = await Movie.findById(req.params.id);
@@ -111,7 +121,7 @@ app.get("/watch/:id", async (req, res) => {
 
     res.setHeader("Content-Type", "text/html");
 
-    return res.send(`
+    res.send(`
       <!DOCTYPE html>
       <html>
       <head>
@@ -123,9 +133,8 @@ app.get("/watch/:id", async (req, res) => {
         </style>
       </head>
       <body>
-        <video controls autoplay>
+        <video controls autoplay playsinline preload="metadata">
           <source src="${videoUrl}" type="video/mp4">
-          Your browser does not support video.
         </video>
       </body>
       </html>
