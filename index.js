@@ -1,43 +1,135 @@
+const express = require("express");
+const axios = require("axios");
+const mongoose = require("mongoose");
+
+const app = express();
+app.use(express.json());
+
+// =======================
+// ENV CHECK (prevents crash)
+// =======================
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const MONGO_URL = process.env.MONGO_URL;
+
+console.log("Server starting...");
+
+if (!BOT_TOKEN) console.log("❌ BOT_TOKEN missing");
+if (!MONGO_URL) console.log("❌ MONGO_URL missing");
+
+// =======================
+// SAFE MONGODB CONNECT
+// =======================
+if (MONGO_URL) {
+  mongoose.connect(MONGO_URL)
+    .then(() => console.log("MongoDB Connected"))
+    .catch(err => console.log("Mongo Error:", err.message));
+}
+
+// =======================
+// MODEL
+// =======================
+const movieSchema = new mongoose.Schema({
+  file_id: String,
+  name: String
+});
+
+const Movie = mongoose.model("Movie", movieSchema);
+
+// =======================
+// WEBHOOK ROUTE
+// =======================
 app.post("/telegram", async (req, res) => {
   try {
-    const update = req.body;
+    console.log("UPDATE RECEIVED");
 
     const msg =
-      update.message ||
-      update.edited_message ||
-      update.channel_post;
+      req.body.message ||
+      req.body.channel_post ||
+      req.body.edited_message;
 
     if (!msg) return res.sendStatus(200);
 
-    const media = msg.video || msg.document;
+    const file_id =
+      msg.video?.file_id ||
+      msg.document?.file_id;
 
-    if (!media) return res.sendStatus(200);
-
-    const file_id = media.file_id;
-
-    const id = Date.now().toString();
-    db[id] = file_id;
+    if (!file_id) return res.sendStatus(200);
 
     const movieName =
       msg.caption ||
-      media.file_name ||
+      msg.video?.file_name ||
+      msg.document?.file_name ||
       "Untitled Movie";
 
-    const link = `https://ott-backend-5iwy.onrender.com/watch/${id}`;
+    const saved = await Movie.create({
+      file_id,
+      name: movieName
+    });
 
-    await axios.get(
+    const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
+
+    await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
-        params: {
-          chat_id: msg.chat.id,
-          text: `🎬 ${movieName}\n👉 Watch: ${link}`
-        }
+        chat_id: msg.chat.id,
+        text: `🎬 ${movieName}\n👉 Watch: ${link}`
       }
     );
 
     res.sendStatus(200);
+
   } catch (err) {
-    console.log("WEBHOOK ERROR:", err.message);
+    console.log("Webhook error:", err.message);
     res.sendStatus(200);
   }
+});
+
+// =======================
+// STREAM ROUTE
+// =======================
+app.get("/watch/:id", async (req, res) => {
+  try {
+    const movie = await Movie.findById(req.params.id);
+
+    if (!movie) return res.status(404).send("Not found");
+
+    const tg = await axios.get(
+      `https://api.telegram.org/bot${BOT_TOKEN}/getFile`,
+      {
+        params: { file_id: movie.file_id }
+      }
+    );
+
+    const filePath = tg.data.result.file_path;
+
+    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+
+    const response = await axios({
+      url: fileUrl,
+      responseType: "stream"
+    });
+
+    res.setHeader("Content-Type", "video/mp4");
+    response.data.pipe(res);
+
+  } catch (err) {
+    console.log("Stream error:", err.message);
+    res.status(500).send("Stream error");
+  }
+});
+
+// =======================
+// HOME ROUTE
+// =======================
+app.get("/", (req, res) => {
+  res.send("OTT Backend Running");
+});
+
+// =======================
+// START SERVER
+// =======================
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log("Server running on port", PORT);
 });
