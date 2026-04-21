@@ -1,33 +1,25 @@
 const express = require("express");
 const axios = require("axios");
 const mongoose = require("mongoose");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 app.use(express.json());
 
 // =======================
-// ENV VARIABLES
+// ENV
 // =======================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URL = process.env.MONGO_URL;
 
-console.log("🚀 Server starting...");
+// =======================
+// DB
+// =======================
+mongoose.connect(MONGO_URL)
+  .then(() => console.log("MongoDB Connected"))
+  .catch(err => console.log(err));
 
-if (!BOT_TOKEN) console.log("❌ BOT_TOKEN missing");
-if (!MONGO_URL) console.log("❌ MONGO_URL missing");
-
-// =======================
-// MONGODB CONNECTION
-// =======================
-if (MONGO_URL) {
-  mongoose.connect(MONGO_URL)
-    .then(() => console.log("✅ MongoDB Connected"))
-    .catch(err => console.log("❌ Mongo Error:", err.message));
-}
-
-// =======================
-// SCHEMA
-// =======================
 const movieSchema = new mongoose.Schema({
   file_id: String,
   name: String
@@ -36,14 +28,21 @@ const movieSchema = new mongoose.Schema({
 const Movie = mongoose.model("Movie", movieSchema);
 
 // =======================
-// TELEGRAM WEBHOOK
+// TEMP FOLDER
+// =======================
+const TEMP_DIR = path.join(__dirname, "temp");
+if (!fs.existsSync(TEMP_DIR)) {
+  fs.mkdirSync(TEMP_DIR);
+}
+
+// =======================
+// WEBHOOK
 // =======================
 app.post("/telegram", async (req, res) => {
   try {
     const msg =
       req.body.message ||
-      req.body.channel_post ||
-      req.body.edited_message;
+      req.body.channel_post;
 
     if (!msg) return res.sendStatus(200);
 
@@ -53,16 +52,13 @@ app.post("/telegram", async (req, res) => {
 
     if (!file_id) return res.sendStatus(200);
 
-    const movieName =
+    const name =
       msg.caption ||
       msg.video?.file_name ||
       msg.document?.file_name ||
-      "Untitled Movie";
+      "movie";
 
-    const saved = await Movie.create({
-      file_id,
-      name: movieName
-    });
+    const saved = await Movie.create({ file_id, name });
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
@@ -70,68 +66,93 @@ app.post("/telegram", async (req, res) => {
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
         chat_id: msg.chat.id,
-        text: `🎬 ${movieName}\n👉 Watch: ${link}`
+        text: `🎬 ${name}\n👉 Watch: ${link}`
       }
     );
 
     res.sendStatus(200);
 
-  } catch (err) {
-    console.log("Webhook error:", err.message);
+  } catch (e) {
+    console.log(e.message);
     res.sendStatus(200);
   }
 });
 
 // =======================
-// STREAM ROUTE (FIXED + DEBUG)
+// BUFFERED STREAM ROUTE
 // =======================
 app.get("/watch/:id", async (req, res) => {
   try {
     const movie = await Movie.findById(req.params.id);
+    if (!movie) return res.status(404).send("Not found");
 
-    console.log("MOVIE FILE ID:", movie?.file_id);
+    console.log("FILE ID:", movie.file_id);
 
-    if (!movie) {
-      return res.status(404).send("Movie not found");
-    }
-
-    if (!movie.file_id) {
-      return res.status(400).send("Missing file_id");
-    }
-
+    // STEP 1: get file path from Telegram
     const tg = await axios.get(
       `https://api.telegram.org/bot${BOT_TOKEN}/getFile`,
-      {
-        params: { file_id: movie.file_id }
-      }
+      { params: { file_id: movie.file_id } }
     );
 
-    console.log("GETFILE RESPONSE:", JSON.stringify(tg.data, null, 2));
-
     if (!tg.data.ok) {
-      return res.status(500).send("Telegram getFile failed");
+      return res.status(500).send("Telegram error");
     }
 
     const filePath = tg.data.result.file_path;
 
-    console.log("FILE PATH:", filePath);
-
     const fileUrl =
       `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
 
-    console.log("FILE URL:", fileUrl);
+    // STEP 2: download full file first (BUFFER)
+    const fileName = `${movie._id}.mp4`;
+    const filePathLocal = path.join(TEMP_DIR, fileName);
+
+    const writer = fs.createWriteStream(filePathLocal);
 
     const response = await axios({
       url: fileUrl,
+      method: "GET",
       responseType: "stream"
     });
 
-    response.data.on("error", (err) => {
-      console.log("STREAM PIPE ERROR:", err.message);
+    await new Promise((resolve, reject) => {
+      response.data.pipe(writer);
+      writer.on("finish", resolve);
+      writer.on("error", reject);
     });
 
-    res.setHeader("Content-Type", "video/mp4");
-    response.data.pipe(res);
+    console.log("Downloaded to temp:", fileName);
+
+    // STEP 3: stream locally (FAST + STABLE)
+    const stat = fs.statSync(filePathLocal);
+    const fileSize = stat.size;
+
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+      const chunkSize = end - start + 1;
+      const file = fs.createReadStream(filePathLocal, { start, end });
+
+      res.writeHead(206, {
+        "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+        "Accept-Ranges": "bytes",
+        "Content-Length": chunkSize,
+        "Content-Type": "video/mp4"
+      });
+
+      file.pipe(res);
+    } else {
+      res.writeHead(200, {
+        "Content-Length": fileSize,
+        "Content-Type": "video/mp4"
+      });
+
+      fs.createReadStream(filePathLocal).pipe(res);
+    }
 
   } catch (err) {
     console.log("STREAM ERROR:", err.message);
@@ -140,17 +161,9 @@ app.get("/watch/:id", async (req, res) => {
 });
 
 // =======================
-// HOME ROUTE
-// =======================
 app.get("/", (req, res) => {
-  res.send("OTT Backend Running");
+  res.send("Buffered OTT Running");
 });
 
-// =======================
-// START SERVER
-// =======================
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log("Server running on port", PORT);
-});
+app.listen(PORT, () => console.log("Running on", PORT));
