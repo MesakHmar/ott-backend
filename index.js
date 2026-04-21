@@ -4,14 +4,11 @@ const axios = require("axios");
 const app = express();
 app.use(express.json());
 
-// 🔐 Secure token from environment (Render)
+// 🔐 Telegram bot token from Render environment
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
-// In-memory database (resets on restart)
-let db = {};
-
 // =======================
-// HEALTH CHECK
+// HOME ROUTE
 // =======================
 app.get("/", (req, res) => {
   res.send("OTT Backend Running");
@@ -26,22 +23,19 @@ app.post("/telegram", async (req, res) => {
 
     if (!msg) return res.sendStatus(200);
 
-    // Support video + document (VERY IMPORTANT)
     const media = msg.video || msg.document;
 
     if (!media) return res.sendStatus(200);
 
     const file_id = media.file_id;
 
-    const id = Date.now().toString();
-    db[id] = file_id;
-
     const movieName =
       msg.caption ||
       media.file_name ||
       "Untitled Movie";
 
-    const link = `https://ott-backend-5iwy.onrender.com/watch/${id}`;
+    // 👉 IMPORTANT CHANGE: file_id directly in URL (no DB)
+    const link = `https://ott-backend-5iwy.onrender.com/watch/${encodeURIComponent(file_id)}`;
 
     await axios.get(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
@@ -61,15 +55,11 @@ app.post("/telegram", async (req, res) => {
 });
 
 // =======================
-// STREAM VIDEO ROUTE
+// STREAM ROUTE (FIXED)
 // =======================
-app.get("/watch/:id", async (req, res) => {
+app.get("/watch/:file_id", async (req, res) => {
   try {
-    const file_id = db[req.params.id];
-
-    if (!file_id) {
-      return res.status(404).send("Video not found");
-    }
+    const file_id = req.params.file_id;
 
     const tg = await axios.get(
       `https://api.telegram.org/bot${BOT_TOKEN}/getFile`,
@@ -91,6 +81,7 @@ app.get("/watch/:id", async (req, res) => {
     res.setHeader("Content-Type", "video/mp4");
 
     response.data.pipe(res);
+
   } catch (err) {
     console.log("Stream error:", err.message);
     res.status(500).send("Stream error");
