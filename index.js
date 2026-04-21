@@ -13,8 +13,8 @@ const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
 const CF_API_TOKEN = process.env.CF_API_TOKEN;
 const R2_BUCKET = process.env.R2_BUCKET;
 
-// 👉 PUT YOUR PUBLIC R2 URL HERE
-const R2_PUBLIC_URL = "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev"; // REPLACE THIS
+// 👉 REPLACE WITH YOUR PUBLIC R2 URL
+const R2_PUBLIC_URL = "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 
 // ================= DB =================
 mongoose.connect(MONGO_URL)
@@ -54,29 +54,29 @@ app.post("/telegram", async (req, res) => {
     const fileUrl =
       `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
 
-    console.log("Downloading file...");
+    console.log("Streaming download from Telegram...");
 
-    // STEP 2: DOWNLOAD FILE
+    // STEP 2: STREAM DOWNLOAD
     const fileResponse = await axios({
       url: fileUrl,
-      responseType: "arraybuffer"
+      responseType: "stream"
     });
-
-    const buffer = Buffer.from(fileResponse.data);
 
     const key = Date.now() + "-" + name;
 
-    console.log("Uploading to R2...");
+    console.log("Uploading to R2 (stream)...");
 
-    // STEP 3: UPLOAD TO R2
+    // STEP 3: STREAM UPLOAD TO R2
     await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
-      buffer,
+      fileResponse.data, // 👈 stream directly
       {
         headers: {
           Authorization: `Bearer ${CF_API_TOKEN}`,
           "Content-Type": "video/mp4"
-        }
+        },
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity
       }
     );
 
@@ -87,7 +87,7 @@ app.post("/telegram", async (req, res) => {
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
-    // STEP 5: SEND LINK TO TELEGRAM
+    // STEP 5: SEND LINK
     await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
@@ -104,13 +104,12 @@ app.post("/telegram", async (req, res) => {
   }
 });
 
-// ================= STREAM ROUTE (FIXED) =================
+// ================= STREAM ROUTE =================
 app.get("/watch/:id", async (req, res) => {
   try {
     const movie = await Movie.findById(req.params.id);
     if (!movie) return res.status(404).send("Not found");
 
-    // 👉 REDIRECT TO R2 PUBLIC URL
     const publicUrl = `${R2_PUBLIC_URL}/${movie.key}`;
 
     return res.redirect(publicUrl);
@@ -123,7 +122,7 @@ app.get("/watch/:id", async (req, res) => {
 
 // ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("R2 OTT Backend Running");
+  res.send("R2 OTT Streaming Running");
 });
 
 // ================= START =================
