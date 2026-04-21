@@ -20,20 +20,18 @@ const TG_API_ID = parseInt(process.env.TG_API_ID);
 const TG_API_HASH = process.env.TG_API_HASH;
 const TG_SESSION = process.env.TG_SESSION;
 
-// 👉 PUT YOUR R2 PUBLIC URL HERE
+// 🔥 YOUR R2 PUBLIC URL (FIXED)
 const R2_PUBLIC_URL = "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 
 // ================= DB =================
-mongoose.connect(MONGO_URL)
-  .then(() => console.log("MongoDB Connected"))
-  .catch(err => console.log(err));
+mongoose.connect(MONGO_URL);
 
 const Movie = mongoose.model("Movie", new mongoose.Schema({
   key: String,
   name: String
 }));
 
-// ================= MTProto =================
+// ================= TELEGRAM CLIENT =================
 const client = new TelegramClient(
   new StringSession(TG_SESSION),
   TG_API_ID,
@@ -46,7 +44,7 @@ const client = new TelegramClient(
   console.log("✅ MTProto Connected");
 })();
 
-// ================= TELEGRAM WEBHOOK =================
+// ================= WEBHOOK =================
 app.post("/telegram", async (req, res) => {
   try {
     const msg = req.body.message || req.body.channel_post;
@@ -57,21 +55,18 @@ app.post("/telegram", async (req, res) => {
 
     const name = file.file_name || "movie.mp4";
 
-    console.log("📥 Downloading via MTProto...");
+    console.log("📥 Downloading via Telegram MTProto...");
 
-    // 🔥 GET MESSAGE
     const messages = await client.getMessages(msg.chat.id, {
       ids: msg.message_id
     });
 
-    // 🔥 DOWNLOAD LARGE FILE (NO LIMIT)
     const buffer = await client.downloadMedia(messages[0]);
 
     const key = Date.now() + "-" + name;
 
     console.log("⬆ Uploading to R2...");
 
-    // 🔥 UPLOAD TO R2
     await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
       buffer,
@@ -86,14 +81,13 @@ app.post("/telegram", async (req, res) => {
 
     console.log("✅ Uploaded:", key);
 
-    // SAVE DB
     const saved = await Movie.create({ key, name });
+
+    // 🔥 FIXED STREAM LINK (NO SYNTAX ERROR)
+    const publicUrl = `${R2_PUBLIC_URL}/${movie.key}`;
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
-    console.log("📤 Sending link");
-
-    // SEND LINK
     await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
@@ -116,7 +110,7 @@ app.get("/watch/:id", async (req, res) => {
     const movie = await Movie.findById(req.params.id);
     if (!movie) return res.status(404).send("Not found");
 
-    const publicUrl = `${https://pub-1032004a583a464caf18df15b07cda3c.r2.dev}/${movie.key}`;
+    const publicUrl = `${R2_PUBLIC_URL}/${movie.key}`;
 
     return res.redirect(publicUrl);
 
@@ -128,7 +122,7 @@ app.get("/watch/:id", async (req, res) => {
 
 // ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("🚀 Telegram → R2 OTT Running");
+  res.send("Telegram → R2 OTT Running");
 });
 
 // ================= START =================
