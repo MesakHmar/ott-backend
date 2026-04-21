@@ -6,18 +6,21 @@ const app = express();
 app.use(express.json());
 
 // =======================
-// ENV CHECK (prevents crash)
+// ENV VARIABLES
 // =======================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URL = process.env.MONGO_URL;
 
 console.log("Server starting...");
 
+// =======================
+// CHECK ENV
+// =======================
 if (!BOT_TOKEN) console.log("❌ BOT_TOKEN missing");
 if (!MONGO_URL) console.log("❌ MONGO_URL missing");
 
 // =======================
-// SAFE MONGODB CONNECT
+// MONGODB CONNECTION
 // =======================
 if (MONGO_URL) {
   mongoose.connect(MONGO_URL)
@@ -26,7 +29,7 @@ if (MONGO_URL) {
 }
 
 // =======================
-// MODEL
+// SCHEMA
 // =======================
 const movieSchema = new mongoose.Schema({
   file_id: String,
@@ -36,12 +39,10 @@ const movieSchema = new mongoose.Schema({
 const Movie = mongoose.model("Movie", movieSchema);
 
 // =======================
-// WEBHOOK ROUTE
+// TELEGRAM WEBHOOK
 // =======================
 app.post("/telegram", async (req, res) => {
   try {
-    console.log("UPDATE RECEIVED");
-
     const msg =
       req.body.message ||
       req.body.channel_post ||
@@ -85,11 +86,13 @@ app.post("/telegram", async (req, res) => {
 });
 
 // =======================
-// STREAM ROUTE
+// STREAM ROUTE (YOUR FIXED VERSION)
 // =======================
 app.get("/watch/:id", async (req, res) => {
   try {
     const movie = await Movie.findById(req.params.id);
+
+    console.log("MOVIE:", movie);
 
     if (!movie) return res.status(404).send("Not found");
 
@@ -100,9 +103,18 @@ app.get("/watch/:id", async (req, res) => {
       }
     );
 
+    console.log("TG RESPONSE:", tg.data);
+
+    if (!tg.data.ok) {
+      return res.status(500).send("Telegram getFile failed");
+    }
+
     const filePath = tg.data.result.file_path;
 
-    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+    const fileUrl =
+      `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+
+    console.log("FILE URL:", fileUrl);
 
     const response = await axios({
       url: fileUrl,
@@ -113,7 +125,7 @@ app.get("/watch/:id", async (req, res) => {
     response.data.pipe(res);
 
   } catch (err) {
-    console.log("Stream error:", err.message);
+    console.log("STREAM ERROR:", err.message);
     res.status(500).send("Stream error");
   }
 });
