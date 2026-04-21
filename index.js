@@ -20,7 +20,7 @@ const TG_API_ID = parseInt(process.env.TG_API_ID);
 const TG_API_HASH = process.env.TG_API_HASH;
 const TG_SESSION = process.env.TG_SESSION;
 
-// 🔥 YOUR R2 PUBLIC URL (FIXED)
+// 🔥 R2 PUBLIC URL (CORRECT)
 const R2_PUBLIC_URL = "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 
 // ================= DB =================
@@ -55,7 +55,7 @@ app.post("/telegram", async (req, res) => {
 
     const name = file.file_name || "movie.mp4";
 
-    console.log("📥 Downloading via Telegram MTProto...");
+    console.log("📥 Downloading from Telegram...");
 
     const messages = await client.getMessages(msg.chat.id, {
       ids: msg.message_id
@@ -82,9 +82,6 @@ app.post("/telegram", async (req, res) => {
     console.log("✅ Uploaded:", key);
 
     const saved = await Movie.create({ key, name });
-
-    // 🔥 FIXED STREAM LINK (NO SYNTAX ERROR)
-    const publicUrl = `${R2_PUBLIC_URL}/${movie.key}`;
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
