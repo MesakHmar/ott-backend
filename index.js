@@ -20,7 +20,7 @@ const TG_API_ID = parseInt(process.env.TG_API_ID);
 const TG_API_HASH = process.env.TG_API_HASH;
 const TG_SESSION = process.env.TG_SESSION;
 
-// 🔥 R2 PUBLIC URL (CORRECT)
+// 🔥 R2 PUBLIC URL
 const R2_PUBLIC_URL = "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 
 // ================= DB =================
@@ -41,10 +41,10 @@ const client = new TelegramClient(
 
 (async () => {
   await client.connect();
-  console.log("✅ MTProto Connected");
+  console.log("✅ Telegram MTProto Connected");
 })();
 
-// ================= WEBHOOK =================
+// ================= TELEGRAM WEBHOOK =================
 app.post("/telegram", async (req, res) => {
   try {
     const msg = req.body.message || req.body.channel_post;
@@ -101,15 +101,35 @@ app.post("/telegram", async (req, res) => {
   }
 });
 
-// ================= STREAM =================
+// ================= STREAM PLAYER (FIXED) =================
 app.get("/watch/:id", async (req, res) => {
   try {
     const movie = await Movie.findById(req.params.id);
     if (!movie) return res.status(404).send("Not found");
 
-    const publicUrl = `${R2_PUBLIC_URL}/${movie.key}`;
+    const videoUrl = `${R2_PUBLIC_URL}/${movie.key}`;
 
-    return res.redirect(publicUrl);
+    res.setHeader("Content-Type", "text/html");
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${movie.name}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { margin:0; background:black; display:flex; align-items:center; justify-content:center; height:100vh; }
+          video { width:100%; max-height:100vh; }
+        </style>
+      </head>
+      <body>
+        <video controls autoplay>
+          <source src="${videoUrl}" type="video/mp4">
+          Your browser does not support video.
+        </video>
+      </body>
+      </html>
+    `);
 
   } catch (err) {
     console.log("STREAM ERROR:", err.message);
@@ -119,7 +139,7 @@ app.get("/watch/:id", async (req, res) => {
 
 // ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("Telegram → R2 OTT Running");
+  res.send("Telegram → R2 OTT Running 🚀");
 });
 
 // ================= START =================
