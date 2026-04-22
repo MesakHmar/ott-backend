@@ -22,7 +22,7 @@ const TG_API_ID = parseInt(process.env.TG_API_ID);
 const TG_API_HASH = process.env.TG_API_HASH;
 const TG_SESSION = process.env.TG_SESSION;
 
-// ================= R2 PUBLIC URL =================
+// ================= R2 URL =================
 const R2_PUBLIC_URL =
   "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 
@@ -50,35 +50,66 @@ const client = new TelegramClient(
   console.log("✅ Telegram Connected");
 })();
 
-// ================= TELEGRAM WEBHOOK =================
+// ================= DEBUG WEBHOOK =================
 app.post("/telegram", async (req, res) => {
   try {
-    const msg = req.body.message || req.body.channel_post;
-    if (!msg) return res.sendStatus(200);
+    console.log("\n==============================");
+    console.log("📩 RAW UPDATE RECEIVED:");
+    console.log(JSON.stringify(req.body, null, 2));
+    console.log("==============================\n");
+
+    const msg =
+      req.body.message ||
+      req.body.channel_post ||
+      req.body.edited_message;
+
+    if (!msg) {
+      console.log("❌ NO MESSAGE OBJECT FOUND");
+      return res.sendStatus(200);
+    }
+
+    console.log("📥 MESSAGE TYPE DETECTED");
+
+    console.log("CHAT TYPE:", msg.chat?.type);
+    console.log("CHAT ID:", msg.chat?.id);
 
     const file = msg.video || msg.document;
-    if (!file) return res.sendStatus(200);
 
-    const fileName = file.file_name || "movie.mp4";
+    if (!file) {
+      console.log("❌ NO FILE FOUND IN MESSAGE");
+      console.log("MESSAGE KEYS:", Object.keys(msg));
+      return res.sendStatus(200);
+    }
 
-    console.log("📥 Telegram download started...");
+    console.log("🎬 FILE FOUND:");
+    console.log("File Name:", file.file_name);
+    console.log("File Size:", file.file_size);
 
+    // ================= TELEGRAM DOWNLOAD =================
     const messages = await client.getMessages(msg.chat.id, {
       ids: msg.message_id
     });
+
+    console.log("📡 DOWNLOADING FROM TELEGRAM...");
 
     const tgStream = await client.downloadMedia(messages[0], {
       asStream: true
     });
 
-    // ================= UNIQUE KEY =================
+    if (!tgStream) {
+      console.log("❌ TELEGRAM STREAM NULL");
+      return res.sendStatus(200);
+    }
+
+    // ================= FILE KEY =================
     const key = `${Date.now()}-${Math.random()
       .toString(36)
-      .substring(2)}-${fileName}`;
+      .substring(2)}-${file.file_name || "movie.mp4"}`;
 
     const tempPath = path.join("/tmp", key);
 
-    // ================= STEP 1: SAVE TO DISK =================
+    console.log("💾 SAVING TO TEMP FILE:", tempPath);
+
     const writeStream = fs.createWriteStream(tempPath);
 
     tgStream.pipe(writeStream);
@@ -88,10 +119,10 @@ app.post("/telegram", async (req, res) => {
       writeStream.on("error", reject);
     });
 
-    console.log("💾 File saved locally");
+    console.log("✅ TEMP FILE SAVED");
 
-    // ================= STEP 2: UPLOAD TO R2 =================
-    console.log("⬆ Uploading to R2...");
+    // ================= UPLOAD TO R2 =================
+    console.log("⬆ UPLOADING TO R2...");
 
     const fileStream = fs.createReadStream(tempPath);
 
@@ -107,38 +138,42 @@ app.post("/telegram", async (req, res) => {
       }
     );
 
-    console.log("UPLOAD RESPONSE:", uploadRes.data);
+    console.log("📦 R2 RESPONSE:");
+    console.log(JSON.stringify(uploadRes.data, null, 2));
 
-    if (!uploadRes.data || uploadRes.data.success !== true) {
-      console.log("❌ Upload failed");
+    if (!uploadRes.data?.success) {
+      console.log("❌ R2 UPLOAD FAILED");
       fs.unlinkSync(tempPath);
       return res.sendStatus(200);
     }
 
-    // ================= STEP 3: CLEANUP =================
     fs.unlinkSync(tempPath);
 
-    console.log("✅ Uploaded:", key);
+    console.log("✅ UPLOAD SUCCESS");
 
     const saved = await Movie.create({
       key,
-      name: fileName
+      name: file.file_name
     });
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
-    // ================= SEND BOT MESSAGE =================
+    console.log("🔗 GENERATED LINK:", link);
+
     await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
         chat_id: msg.chat.id,
-        text: `🎬 ${fileName}\n👉 ${link}`
+        text: `🎬 ${file.file_name}\n👉 ${link}`
       }
     );
 
+    console.log("📤 BOT MESSAGE SENT");
+
     res.sendStatus(200);
   } catch (err) {
-    console.log("❌ ERROR:", err.message);
+    console.log("❌ ERROR:");
+    console.log(err);
     res.sendStatus(200);
   }
 });
@@ -187,11 +222,11 @@ app.get("/watch/:id", async (req, res) => {
 
 // ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("Telegram → R2 OTT Running 🚀");
+  res.send("DEBUG MODE ACTIVE 🚀 Telegram → R2");
 });
 
 // ================= START =================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+  console.log("Server running on", PORT);
 });
