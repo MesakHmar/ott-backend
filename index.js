@@ -1,8 +1,6 @@
 const express = require("express");
 const axios = require("axios");
 const mongoose = require("mongoose");
-const fs = require("fs");
-const path = require("path");
 
 const { TelegramClient } = require("telegram");
 const { StringSession } = require("telegram/sessions");
@@ -65,12 +63,11 @@ app.post("/telegram", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // ✅ FIXED: proper file detection
     const file =
       msg.video ||
       msg.document ||
-      msg.animation ||
       msg.audio ||
+      msg.animation ||
       msg.photo?.[msg.photo.length - 1];
 
     if (!file) {
@@ -84,61 +81,54 @@ app.post("/telegram", async (req, res) => {
       ids: msg.message_id
     });
 
-    const tgStream = await client.downloadMedia(messages[0], {
-      asStream: true
-    });
-
-    if (!tgStream) {
-      console.log("❌ TG STREAM FAILED");
+    const msgObj = messages?.[0];
+    if (!msgObj) {
+      console.log("❌ MESSAGE NOT FOUND");
       return res.sendStatus(200);
     }
 
-    const fileName = file.file_name || "movie.mp4";
-    const key = `${Date.now()}-${fileName}`;
-    const tempPath = path.join("/tmp", key);
+    // ================= FIX: BUFFER DOWNLOAD =================
+    console.log("📥 DOWNLOADING FROM TELEGRAM...");
 
-    const writeStream = fs.createWriteStream(tempPath);
+    const fileBuffer = await client.downloadMedia(msgObj);
 
-    // ✅ FIXED: stream OR buffer support
-    if (typeof tgStream.pipe === "function") {
-      tgStream.pipe(writeStream);
-    } else {
-      writeStream.write(tgStream);
-      writeStream.end();
+    if (!fileBuffer || fileBuffer.length === 0) {
+      console.log("❌ EMPTY BUFFER (DOWNLOAD FAILED)");
+      return res.sendStatus(200);
     }
 
-    await new Promise((resolve, reject) => {
-      writeStream.on("finish", resolve);
-      writeStream.on("error", reject);
-    });
+    console.log("📦 FILE SIZE:", fileBuffer.length);
 
-    console.log("💾 FILE SAVED");
+    // ================= SAFE FILENAME =================
+    const fileName = (file.file_name || "movie.mp4").replace(
+      /[^a-zA-Z0-9.\-_]/g,
+      "_"
+    );
 
-    const fileStream = fs.createReadStream(tempPath);
+    const key = `${Date.now()}-${fileName}`;
 
+    // ================= UPLOAD TO R2 =================
     console.log("⬆ UPLOADING TO R2...");
 
     const uploadRes = await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
-      fileStream,
+      fileBuffer,
       {
         headers: {
           Authorization: `Bearer ${CF_API_TOKEN}`,
           "Content-Type": "video/mp4"
-        },
-        maxBodyLength: Infinity
+        }
       }
     );
 
     if (!uploadRes.data?.success) {
-      console.log("❌ R2 FAILED");
+      console.log("❌ R2 UPLOAD FAILED");
       return res.sendStatus(200);
     }
 
-    fs.unlinkSync(tempPath);
+    console.log("☁️ UPLOADED SUCCESSFULLY");
 
-    console.log("☁️ UPLOADED TO R2");
-
+    // ================= SAVE DB =================
     const saved = await Movie.create({
       key,
       name: fileName
@@ -146,8 +136,9 @@ app.post("/telegram", async (req, res) => {
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
-    console.log("🔗 LINK:", link);
+    console.log("🔗 GENERATED LINK:", link);
 
+    // ================= SEND BOT MESSAGE =================
     await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
@@ -171,7 +162,7 @@ app.get("/watch/:id", async (req, res) => {
     const movie = await Movie.findById(req.params.id);
     if (!movie) return res.status(404).send("Not found");
 
-    const videoUrl = `${R2_PUBLIC_URL}/${movie.key}`;
+    const videoUrl = `${R2_PUBLIC_URL}/${encodeURIComponent(movie.key)}`;
 
     res.send(`
       <!DOCTYPE html>
