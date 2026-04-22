@@ -50,66 +50,44 @@ const client = new TelegramClient(
   console.log("✅ Telegram Connected");
 })();
 
-// ================= DEBUG WEBHOOK =================
+// ================= WEBHOOK =================
 app.post("/telegram", async (req, res) => {
   try {
-    console.log("\n==============================");
-    console.log("📩 RAW UPDATE RECEIVED:");
-    console.log(JSON.stringify(req.body, null, 2));
-    console.log("==============================\n");
-
     const msg =
       req.body.message ||
       req.body.channel_post ||
       req.body.edited_message;
 
-    if (!msg) {
-      console.log("❌ NO MESSAGE OBJECT FOUND");
-      return res.sendStatus(200);
-    }
-
-    console.log("📥 MESSAGE TYPE DETECTED");
-
-    console.log("CHAT TYPE:", msg.chat?.type);
-    console.log("CHAT ID:", msg.chat?.id);
+    if (!msg) return res.sendStatus(200);
 
     const file = msg.video || msg.document;
+    if (!file) return res.sendStatus(200);
 
-    if (!file) {
-      console.log("❌ NO FILE FOUND IN MESSAGE");
-      console.log("MESSAGE KEYS:", Object.keys(msg));
-      return res.sendStatus(200);
-    }
+    const fileName = file.file_name || "movie.mp4";
 
-    console.log("🎬 FILE FOUND:");
-    console.log("File Name:", file.file_name);
-    console.log("File Size:", file.file_size);
+    console.log("🎬 Incoming file:", fileName);
 
-    // ================= TELEGRAM DOWNLOAD =================
     const messages = await client.getMessages(msg.chat.id, {
       ids: msg.message_id
     });
-
-    console.log("📡 DOWNLOADING FROM TELEGRAM...");
 
     const tgStream = await client.downloadMedia(messages[0], {
       asStream: true
     });
 
     if (!tgStream) {
-      console.log("❌ TELEGRAM STREAM NULL");
+      console.log("❌ Telegram stream failed");
       return res.sendStatus(200);
     }
 
     // ================= FILE KEY =================
     const key = `${Date.now()}-${Math.random()
       .toString(36)
-      .substring(2)}-${file.file_name || "movie.mp4"}`;
+      .substring(2)}-${fileName}`;
 
     const tempPath = path.join("/tmp", key);
 
-    console.log("💾 SAVING TO TEMP FILE:", tempPath);
-
+    // ================= SAVE TEMP FILE =================
     const writeStream = fs.createWriteStream(tempPath);
 
     tgStream.pipe(writeStream);
@@ -119,11 +97,9 @@ app.post("/telegram", async (req, res) => {
       writeStream.on("error", reject);
     });
 
-    console.log("✅ TEMP FILE SAVED");
+    console.log("💾 Saved locally");
 
     // ================= UPLOAD TO R2 =================
-    console.log("⬆ UPLOADING TO R2...");
-
     const fileStream = fs.createReadStream(tempPath);
 
     const uploadRes = await axios.put(
@@ -138,47 +114,42 @@ app.post("/telegram", async (req, res) => {
       }
     );
 
-    console.log("📦 R2 RESPONSE:");
-    console.log(JSON.stringify(uploadRes.data, null, 2));
+    fs.unlinkSync(tempPath);
 
     if (!uploadRes.data?.success) {
-      console.log("❌ R2 UPLOAD FAILED");
-      fs.unlinkSync(tempPath);
+      console.log("❌ R2 upload failed");
       return res.sendStatus(200);
     }
 
-    fs.unlinkSync(tempPath);
+    console.log("✅ Uploaded to R2");
 
-    console.log("✅ UPLOAD SUCCESS");
-
+    // ================= SAVE DB =================
     const saved = await Movie.create({
       key,
-      name: file.file_name
+      name: fileName
     });
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
-    console.log("🔗 GENERATED LINK:", link);
-
+    // ================= SEND BOT MESSAGE =================
     await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
         chat_id: msg.chat.id,
-        text: `🎬 ${file.file_name}\n👉 ${link}`
+        text: `🎬 ${fileName}\n👉 ${link}`
       }
     );
 
-    console.log("📤 BOT MESSAGE SENT");
+    console.log("📤 Sent link:", link);
 
     res.sendStatus(200);
   } catch (err) {
-    console.log("❌ ERROR:");
-    console.log(err);
+    console.log("❌ ERROR:", err.message);
     res.sendStatus(200);
   }
 });
 
-// ================= WATCH PAGE =================
+// ================= STREAM PAGE =================
 app.get("/watch/:id", async (req, res) => {
   try {
     const movie = await Movie.findById(req.params.id);
@@ -208,7 +179,7 @@ app.get("/watch/:id", async (req, res) => {
         </style>
       </head>
       <body>
-        <video controls autoplay playsinline preload="metadata">
+        <video controls autoplay playsinline>
           <source src="${videoUrl}" type="video/mp4">
         </video>
       </body>
@@ -222,10 +193,10 @@ app.get("/watch/:id", async (req, res) => {
 
 // ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("DEBUG MODE ACTIVE 🚀 Telegram → R2");
+  res.send("🚀 Telegram → R2 OTT Backend Running");
 });
 
-// ================= START =================
+// ================= START SERVER =================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Server running on", PORT);
