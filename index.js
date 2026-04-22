@@ -1,8 +1,9 @@
 const express = require("express");
 const axios = require("axios");
 const mongoose = require("mongoose");
+const fs = require("fs");
+const path = require("path");
 
-const { PassThrough } = require("stream");
 const { TelegramClient } = require("telegram");
 const { StringSession } = require("telegram/sessions");
 
@@ -60,7 +61,7 @@ app.post("/telegram", async (req, res) => {
 
     const fileName = file.file_name || "movie.mp4";
 
-    console.log("📥 Telegram stream starting...");
+    console.log("📥 Telegram download started...");
 
     const messages = await client.getMessages(msg.chat.id, {
       ids: msg.message_id
@@ -73,15 +74,30 @@ app.post("/telegram", async (req, res) => {
     // ================= UNIQUE KEY =================
     const key = `${Date.now()}-${Math.random()
       .toString(36)
-      .slice(2)}-${fileName}`;
+      .substring(2)}-${fileName}`;
+
+    const tempPath = path.join("/tmp", key);
+
+    console.log("💾 Saving temp file...");
+
+    const writeStream = fs.createWriteStream(tempPath);
+
+    // STEP 1: Telegram → disk
+    tgStream.pipe(writeStream);
+
+    await new Promise((resolve, reject) => {
+      writeStream.on("finish", resolve);
+      writeStream.on("error", reject);
+    });
 
     console.log("⬆ Uploading to R2...");
 
-    const uploadStream = new PassThrough();
+    const fileStream = fs.createReadStream(tempPath);
 
-    const uploadPromise = axios.put(
+    // STEP 2: disk → R2 (SAFE)
+    const uploadRes = await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
-      uploadStream,
+      fileStream,
       {
         headers: {
           Authorization: `Bearer ${CF_API_TOKEN}`,
@@ -91,15 +107,16 @@ app.post("/telegram", async (req, res) => {
       }
     );
 
-    // PIPE DIRECT STREAM
-    tgStream.pipe(uploadStream);
-
-    const uploadRes = await uploadPromise;
+    console.log("UPLOAD RESPONSE:", uploadRes.data);
 
     if (!uploadRes.data || uploadRes.data.success !== true) {
-      console.log("❌ Upload failed:", uploadRes.data);
+      console.log("❌ Upload failed");
+      fs.unlinkSync(tempPath);
       return res.sendStatus(200);
     }
+
+    // STEP 3: cleanup
+    fs.unlinkSync(tempPath);
 
     console.log("✅ Uploaded:", key);
 
