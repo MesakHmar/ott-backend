@@ -60,7 +60,7 @@ app.post("/telegram", async (req, res) => {
 
     const fileName = file.file_name || "movie.mp4";
 
-    console.log("📥 Downloading from Telegram...");
+    console.log("📥 Telegram stream starting...");
 
     const messages = await client.getMessages(msg.chat.id, {
       ids: msg.message_id
@@ -70,7 +70,7 @@ app.post("/telegram", async (req, res) => {
       asStream: true
     });
 
-    // ================= UNIQUE R2 KEY =================
+    // ================= UNIQUE KEY =================
     const key = `${Date.now()}-${Math.random()
       .toString(36)
       .slice(2)}-${fileName}`;
@@ -91,15 +91,13 @@ app.post("/telegram", async (req, res) => {
       }
     );
 
-    // PIPE DIRECTLY (NO BUFFER, NO TEMP FILE)
+    // PIPE DIRECT STREAM
     tgStream.pipe(uploadStream);
 
     const uploadRes = await uploadPromise;
 
-    console.log("UPLOAD RESPONSE:", uploadRes.data);
-
     if (!uploadRes.data || uploadRes.data.success !== true) {
-      console.log("❌ R2 upload failed");
+      console.log("❌ Upload failed:", uploadRes.data);
       return res.sendStatus(200);
     }
 
@@ -127,7 +125,7 @@ app.post("/telegram", async (req, res) => {
   }
 });
 
-// ================= STREAM PLAYER =================
+// ================= WATCH PAGE =================
 app.get("/watch/:id", async (req, res) => {
   try {
     const movie = await Movie.findById(req.params.id);
@@ -146,8 +144,8 @@ app.get("/watch/:id", async (req, res) => {
             margin: 0;
             background: black;
             display: flex;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
             height: 100vh;
           }
           video {
@@ -177,5 +175,5 @@ app.get("/", (req, res) => {
 // ================= START =================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+  console.log("Server running on", PORT);
 });
