@@ -1,8 +1,6 @@
 const express = require("express");
 const axios = require("axios");
 const mongoose = require("mongoose");
-const fs = require("fs");
-const path = require("path");
 
 const { TelegramClient } = require("telegram");
 const { StringSession } = require("telegram/sessions");
@@ -22,7 +20,7 @@ const TG_API_ID = parseInt(process.env.TG_API_ID);
 const TG_API_HASH = process.env.TG_API_HASH;
 const TG_SESSION = process.env.TG_SESSION;
 
-// ================= R2 PUBLIC URL =================
+// ================= R2 URL =================
 const R2_PUBLIC_URL =
   "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 
@@ -37,7 +35,7 @@ const Movie = mongoose.model(
   })
 );
 
-// ================= TELEGRAM CLIENT =================
+// ================= TELEGRAM =================
 const client = new TelegramClient(
   new StringSession(TG_SESSION),
   TG_API_ID,
@@ -60,21 +58,17 @@ app.post("/telegram", async (req, res) => {
       req.body.channel_post ||
       req.body.edited_message;
 
-    if (!msg) {
-      console.log("❌ NO MESSAGE");
-      return res.sendStatus(200);
-    }
+    if (!msg) return res.sendStatus(200);
 
-    // ✅ FIXED: proper file detection
     const file =
       msg.video ||
       msg.document ||
-      msg.animation ||
       msg.audio ||
+      msg.animation ||
       msg.photo?.[msg.photo.length - 1];
 
     if (!file) {
-      console.log("❌ NO FILE FOUND");
+      console.log("❌ NO FILE");
       return res.sendStatus(200);
     }
 
@@ -84,61 +78,50 @@ app.post("/telegram", async (req, res) => {
       ids: msg.message_id
     });
 
-    const tgStream = await client.downloadMedia(messages[0], {
-      asStream: true
-    });
-
-    if (!tgStream) {
-      console.log("❌ TG STREAM FAILED");
+    const msgObj = messages?.[0];
+    if (!msgObj) {
+      console.log("❌ MESSAGE NOT FOUND");
       return res.sendStatus(200);
     }
 
-    const fileName = file.file_name || "movie.mp4";
-    const key = `${Date.now()}-${fileName}`;
-    const tempPath = path.join("/tmp", key);
+    console.log("📥 DOWNLOADING FROM TELEGRAM...");
 
-    const writeStream = fs.createWriteStream(tempPath);
+    // ================= FIX: ALWAYS BUFFER =================
+    const fileBuffer = await client.downloadMedia(msgObj);
 
-    // ✅ FIXED: stream OR buffer support
-    if (typeof tgStream.pipe === "function") {
-      tgStream.pipe(writeStream);
-    } else {
-      writeStream.write(tgStream);
-      writeStream.end();
+    if (!fileBuffer || fileBuffer.length === 0) {
+      console.log("❌ EMPTY FILE BUFFER");
+      return res.sendStatus(200);
     }
 
-    await new Promise((resolve, reject) => {
-      writeStream.on("finish", resolve);
-      writeStream.on("error", reject);
-    });
+    console.log("📦 FILE SIZE:", fileBuffer.length);
 
-    console.log("💾 FILE SAVED");
+    // ================= KEY =================
+    const fileName = file.file_name || "movie.mp4";
+    const key = `${Date.now()}-${fileName}`;
 
-    const fileStream = fs.createReadStream(tempPath);
-
+    // ================= UPLOAD TO R2 =================
     console.log("⬆ UPLOADING TO R2...");
 
     const uploadRes = await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
-      fileStream,
+      fileBuffer,
       {
         headers: {
           Authorization: `Bearer ${CF_API_TOKEN}`,
           "Content-Type": "video/mp4"
-        },
-        maxBodyLength: Infinity
+        }
       }
     );
 
     if (!uploadRes.data?.success) {
-      console.log("❌ R2 FAILED");
+      console.log("❌ R2 UPLOAD FAILED");
       return res.sendStatus(200);
     }
 
-    fs.unlinkSync(tempPath);
-
     console.log("☁️ UPLOADED TO R2");
 
+    // ================= SAVE DB =================
     const saved = await Movie.create({
       key,
       name: fileName
@@ -148,6 +131,7 @@ app.post("/telegram", async (req, res) => {
 
     console.log("🔗 LINK:", link);
 
+    // ================= SEND BOT MESSAGE =================
     await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
@@ -156,7 +140,7 @@ app.post("/telegram", async (req, res) => {
       }
     );
 
-    console.log("📤 SENT TO TELEGRAM");
+    console.log("📤 SENT");
 
     res.sendStatus(200);
   } catch (err) {
@@ -184,8 +168,8 @@ app.get("/watch/:id", async (req, res) => {
             margin: 0;
             background: black;
             display: flex;
-            align-items: center;
             justify-content: center;
+            align-items: center;
             height: 100vh;
           }
           video {
@@ -209,7 +193,7 @@ app.get("/watch/:id", async (req, res) => {
 
 // ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("🚀 Telegram → R2 OTT Running");
+  res.send("🚀 OTT Backend Running");
 });
 
 // ================= START =================
