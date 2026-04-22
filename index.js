@@ -78,11 +78,9 @@ app.post("/telegram", async (req, res) => {
 
     const tempPath = path.join("/tmp", key);
 
-    console.log("💾 Saving temp file...");
-
+    // ================= STEP 1: SAVE TO DISK =================
     const writeStream = fs.createWriteStream(tempPath);
 
-    // STEP 1: Telegram → disk
     tgStream.pipe(writeStream);
 
     await new Promise((resolve, reject) => {
@@ -90,11 +88,13 @@ app.post("/telegram", async (req, res) => {
       writeStream.on("error", reject);
     });
 
+    console.log("💾 File saved locally");
+
+    // ================= STEP 2: UPLOAD TO R2 =================
     console.log("⬆ Uploading to R2...");
 
     const fileStream = fs.createReadStream(tempPath);
 
-    // STEP 2: disk → R2 (SAFE)
     const uploadRes = await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
       fileStream,
@@ -115,7 +115,7 @@ app.post("/telegram", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // STEP 3: cleanup
+    // ================= STEP 3: CLEANUP =================
     fs.unlinkSync(tempPath);
 
     console.log("✅ Uploaded:", key);
@@ -127,6 +127,7 @@ app.post("/telegram", async (req, res) => {
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
 
+    // ================= SEND BOT MESSAGE =================
     await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
@@ -192,5 +193,5 @@ app.get("/", (req, res) => {
 // ================= START =================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Server running on", PORT);
+  console.log("Server running on port", PORT);
 });
