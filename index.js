@@ -50,10 +50,10 @@ const client = new TelegramClient(
   console.log("✅ Telegram Connected");
 })();
 
-// ================= WEBHOOK =================
+// ================= TELEGRAM WEBHOOK =================
 app.post("/telegram", async (req, res) => {
   try {
-    console.log("\n==================== UPDATE ====================");
+    console.log("\n================ NEW UPDATE ================");
 
     const msg =
       req.body.message ||
@@ -65,14 +65,20 @@ app.post("/telegram", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    const file = msg.video || msg.document;
+    // ✅ FIXED: proper file detection
+    const file =
+      msg.video ||
+      msg.document ||
+      msg.animation ||
+      msg.audio ||
+      msg.photo?.[msg.photo.length - 1];
 
     if (!file) {
       console.log("❌ NO FILE FOUND");
       return res.sendStatus(200);
     }
 
-    console.log("🎬 FILE:", file.file_name);
+    console.log("🎬 FILE:", file.file_name || "media");
 
     const messages = await client.getMessages(msg.chat.id, {
       ids: msg.message_id
@@ -87,12 +93,19 @@ app.post("/telegram", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    const key = `${Date.now()}-${file.file_name}`;
+    const fileName = file.file_name || "movie.mp4";
+    const key = `${Date.now()}-${fileName}`;
     const tempPath = path.join("/tmp", key);
 
     const writeStream = fs.createWriteStream(tempPath);
 
-    tgStream.pipe(writeStream);
+    // ✅ FIXED: stream OR buffer support
+    if (typeof tgStream.pipe === "function") {
+      tgStream.pipe(writeStream);
+    } else {
+      writeStream.write(tgStream);
+      writeStream.end();
+    }
 
     await new Promise((resolve, reject) => {
       writeStream.on("finish", resolve);
@@ -102,6 +115,8 @@ app.post("/telegram", async (req, res) => {
     console.log("💾 FILE SAVED");
 
     const fileStream = fs.createReadStream(tempPath);
+
+    console.log("⬆ UPLOADING TO R2...");
 
     const uploadRes = await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
@@ -122,11 +137,11 @@ app.post("/telegram", async (req, res) => {
 
     fs.unlinkSync(tempPath);
 
-    console.log("☁️ Uploaded to R2");
+    console.log("☁️ UPLOADED TO R2");
 
     const saved = await Movie.create({
       key,
-      name: file.file_name
+      name: fileName
     });
 
     const link = `https://ott-backend-5iwy.onrender.com/watch/${saved._id}`;
@@ -137,7 +152,7 @@ app.post("/telegram", async (req, res) => {
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
         chat_id: msg.chat.id,
-        text: `🎬 ${file.file_name}\n👉 ${link}`
+        text: `🎬 ${fileName}\n👉 ${link}`
       }
     );
 
@@ -194,7 +209,7 @@ app.get("/watch/:id", async (req, res) => {
 
 // ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("🚀 Telegram → R2 OTT Backend Running");
+  res.send("🚀 Telegram → R2 OTT Running");
 });
 
 // ================= START =================
