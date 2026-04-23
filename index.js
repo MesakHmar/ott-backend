@@ -13,6 +13,7 @@ const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
 const CF_API_TOKEN = process.env.CF_API_TOKEN;
 const R2_BUCKET = process.env.R2_BUCKET;
 
+// ================= R2 PUBLIC =================
 const R2_PUBLIC_URL =
   "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 
@@ -34,25 +35,31 @@ app.get("/", (req, res) => {
 
 // ================= WATCH =================
 app.get("/watch/:id", async (req, res) => {
-  const movie = await Movie.findById(req.params.id);
-  if (!movie) return res.send("Not found");
+  try {
+    const movie = await Movie.findById(req.params.id);
+    if (!movie) return res.send("Not found");
 
-  const url = `${R2_PUBLIC_URL}/${encodeURIComponent(movie.key)}`;
+    const videoUrl = `${R2_PUBLIC_URL}/${encodeURIComponent(movie.key)}`;
 
-  res.send(`
-  <html>
-  <body style="margin:0;background:black;">
-  <video controls autoplay style="width:100%;height:100%">
-    <source src="${url}" type="video/mp4">
-  </video>
-  </body>
-  </html>
-  `);
+    res.send(`
+    <!DOCTYPE html>
+    <html>
+    <body style="margin:0;background:black;">
+      <video controls autoplay style="width:100%;height:100%">
+        <source src="${videoUrl}" type="video/mp4">
+      </video>
+    </body>
+    </html>
+    `);
+  } catch (err) {
+    console.log("STREAM ERROR:", err);
+    res.send("Error");
+  }
 });
 
 // ================= TELEGRAM WEBHOOK =================
 app.post("/telegram", async (req, res) => {
-  res.sendStatus(200); // VERY IMPORTANT
+  res.sendStatus(200); // IMPORTANT
 
   try {
     console.log("\n🔥 NEW UPDATE");
@@ -62,7 +69,12 @@ app.post("/telegram", async (req, res) => {
       req.body.channel_post ||
       req.body.edited_message;
 
-    if (!msg) return;
+    if (!msg) {
+      console.log("❌ NO MESSAGE");
+      return;
+    }
+
+    console.log("📩 CHAT ID:", msg.chat?.id);
 
     const file =
       msg.video ||
@@ -70,22 +82,26 @@ app.post("/telegram", async (req, res) => {
       msg.animation ||
       msg.audio;
 
-    if (!file) {
-      console.log("❌ NO FILE");
+    // ================= FILE VALIDATION =================
+    if (!file || !file.file_id) {
+      console.log("❌ INVALID FILE");
       return;
     }
 
-    console.log("🎬 FILE RECEIVED");
-// 🔥 SAFETY LIMIT
-if (file.file_size > 200 * 1024 * 1024) {
-  await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    chat_id: msg.chat.id,
-    text: "❌ File too large (max ~200MB on Render)"
-  });
-  return;
-}
+    console.log("🎬 FILE RECEIVED:", file.file_name || "media");
+
+    // ================= SIZE LIMIT =================
+    if (file.file_size && file.file_size > 200 * 1024 * 1024) {
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        chat_id: msg.chat.id,
+        text: "❌ File too large (max ~200MB on Render)"
+      });
+      return;
+    }
 
     // ================= GET FILE PATH =================
+    console.log("📡 Getting file path...");
+
     const fileRes = await axios.get(
       `https://api.telegram.org/bot${BOT_TOKEN}/getFile`,
       {
@@ -93,18 +109,19 @@ if (file.file_size > 200 * 1024 * 1024) {
       }
     );
 
-    if (!fileRes.data.ok) {
-      console.log("❌ getFile FAILED");
+    if (!fileRes.data?.ok) {
+      console.log("❌ getFile FAILED:", fileRes.data);
       return;
     }
 
     const filePath = fileRes.data.result.file_path;
+    console.log("📂 FILE PATH:", filePath);
 
     const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
 
+    // ================= STREAM DOWNLOAD =================
     console.log("📥 STREAMING FROM TELEGRAM...");
 
-    // ================= STREAM DOWNLOAD =================
     const tgStream = await axios({
       url: fileUrl,
       method: "GET",
@@ -116,9 +133,9 @@ if (file.file_size > 200 * 1024 * 1024) {
 
     const key = `${Date.now()}-${fileName}`;
 
-    console.log("⬆ STREAM UPLOADING TO R2...");
-
     // ================= STREAM UPLOAD =================
+    console.log("⬆ UPLOADING TO R2...");
+
     const uploadRes = await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
       tgStream.data,
@@ -132,12 +149,13 @@ if (file.file_size > 200 * 1024 * 1024) {
     );
 
     if (!uploadRes.data?.success) {
-      console.log("❌ R2 FAILED");
+      console.log("❌ R2 FAILED:", uploadRes.data);
       return;
     }
 
-    console.log("☁️ UPLOADED");
+    console.log("☁️ UPLOADED SUCCESS");
 
+    // ================= SAVE =================
     const saved = await Movie.create({
       key,
       name: fileName
@@ -147,7 +165,10 @@ if (file.file_size > 200 * 1024 * 1024) {
 
     console.log("🔗 LINK:", link);
 
-    await axios.post(
+    // ================= SEND MESSAGE =================
+    console.log("📤 SENDING MESSAGE...");
+
+    const botRes = await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
         chat_id: msg.chat.id,
@@ -155,9 +176,12 @@ if (file.file_size > 200 * 1024 * 1024) {
       }
     );
 
-    console.log("📤 SENT");
+    console.log("📤 BOT RESPONSE:", botRes.data);
+
   } catch (err) {
-    console.log("❌ ERROR:", err.message);
+    console.log("❌ ERROR STATUS:", err.response?.status);
+    console.log("❌ ERROR DATA:", err.response?.data);
+    console.log("❌ ERROR MSG:", err.message);
   }
 });
 
