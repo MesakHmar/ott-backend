@@ -76,8 +76,7 @@ app.post("/telegram", async (req, res) => {
     }
 
     console.log("🎬 FILE RECEIVED");
-
-// 🔥 SAFETY LIMIT (adjustable)
+// 🔥 SAFETY LIMIT
 if (file.file_size > 200 * 1024 * 1024) {
   await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     chat_id: msg.chat.id,
