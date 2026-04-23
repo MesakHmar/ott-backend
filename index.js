@@ -20,7 +20,7 @@ const TG_API_ID = parseInt(process.env.TG_API_ID);
 const TG_API_HASH = process.env.TG_API_HASH;
 const TG_SESSION = process.env.TG_SESSION;
 
-// ================= R2 PUBLIC URL =================
+// ================= R2 =================
 const R2_PUBLIC_URL =
   "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 
@@ -35,7 +35,7 @@ const Movie = mongoose.model(
   })
 );
 
-// ================= TELEGRAM =================
+// ================= TELEGRAM CLIENT =================
 const client = new TelegramClient(
   new StringSession(TG_SESSION),
   TG_API_ID,
@@ -73,18 +73,23 @@ app.get("/watch/:id", async (req, res) => {
 
 // ================= TELEGRAM WEBHOOK =================
 app.post("/telegram", async (req, res) => {
-  // respond immediately (IMPORTANT)
-  res.sendStatus(200);
+  res.sendStatus(200); // VERY IMPORTANT
 
   try {
     console.log("\n🔥 NEW UPDATE");
+    console.log(JSON.stringify(req.body, null, 2));
 
     const msg =
       req.body.message ||
       req.body.channel_post ||
       req.body.edited_message;
 
-    if (!msg) return;
+    if (!msg) {
+      console.log("❌ NO MESSAGE");
+      return;
+    }
+
+    console.log("📩 CHAT ID:", msg.chat?.id);
 
     const file =
       msg.video ||
@@ -94,41 +99,37 @@ app.post("/telegram", async (req, res) => {
       msg.photo?.[msg.photo.length - 1];
 
     if (!file) {
-      console.log("❌ NO FILE");
+      console.log("❌ NO FILE FOUND");
       return;
     }
 
-    console.log("🎬 FILE DETECTED");
+    console.log("🎬 FILE:", file.file_name || "media");
 
     const messages = await client.getMessages(msg.chat.id, {
       ids: msg.message_id
     });
 
-    const tgMsg = messages[0];
-    if (!tgMsg) {
-      console.log("❌ NO TELEGRAM MESSAGE");
+    if (!messages || !messages[0]) {
+      console.log("❌ TELEGRAM MESSAGE NOT FOUND");
       return;
     }
 
-    // ================= DOWNLOAD FULL BUFFER =================
     console.log("📥 DOWNLOADING...");
 
-    const buffer = await client.downloadMedia(tgMsg);
+    const buffer = await client.downloadMedia(messages[0]);
 
     if (!buffer || buffer.length === 0) {
-      console.log("❌ EMPTY BUFFER — STOP");
+      console.log("❌ EMPTY BUFFER");
       return;
     }
 
     console.log("📦 SIZE:", buffer.length);
 
-    // ================= SAFE FILE NAME =================
     const fileName = (file.file_name || "movie.mp4")
       .replace(/[^a-zA-Z0-9.\-_]/g, "_");
 
     const key = `${Date.now()}-${fileName}`;
 
-    // ================= UPLOAD TO R2 =================
     console.log("⬆ UPLOADING TO R2...");
 
     const uploadRes = await axios.put(
@@ -144,14 +145,15 @@ app.post("/telegram", async (req, res) => {
       }
     );
 
+    console.log("R2 RESPONSE:", uploadRes.data);
+
     if (!uploadRes.data?.success) {
-      console.log("❌ R2 FAILED");
+      console.log("❌ R2 UPLOAD FAILED");
       return;
     }
 
-    console.log("☁️ UPLOADED SUCCESS");
+    console.log("☁️ UPLOADED");
 
-    // ================= SAVE =================
     const saved = await Movie.create({
       key,
       name: fileName
@@ -161,8 +163,10 @@ app.post("/telegram", async (req, res) => {
 
     console.log("🔗 LINK:", link);
 
-    // ================= SEND BACK =================
-    await axios.post(
+    // ================= SEND MESSAGE =================
+    console.log("📤 SENDING MESSAGE...");
+
+    const botRes = await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
         chat_id: msg.chat.id,
@@ -170,9 +174,10 @@ app.post("/telegram", async (req, res) => {
       }
     );
 
-    console.log("📤 SENT");
+    console.log("📤 BOT RESPONSE:", botRes.data);
+
   } catch (err) {
-    console.log("❌ ERROR:", err.message);
+    console.log("❌ ERROR FULL:", err);
   }
 });
 
