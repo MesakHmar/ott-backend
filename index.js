@@ -2,9 +2,6 @@ const express = require("express");
 const axios = require("axios");
 const mongoose = require("mongoose");
 
-const { TelegramClient } = require("telegram");
-const { StringSession } = require("telegram/sessions");
-
 const app = express();
 app.use(express.json());
 
@@ -16,11 +13,6 @@ const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
 const CF_API_TOKEN = process.env.CF_API_TOKEN;
 const R2_BUCKET = process.env.R2_BUCKET;
 
-const TG_API_ID = parseInt(process.env.TG_API_ID);
-const TG_API_HASH = process.env.TG_API_HASH;
-const TG_SESSION = process.env.TG_SESSION;
-
-// ================= R2 =================
 const R2_PUBLIC_URL =
   "https://pub-1032004a583a464caf18df15b07cda3c.r2.dev";
 
@@ -34,19 +26,6 @@ const Movie = mongoose.model(
     name: String
   })
 );
-
-// ================= TELEGRAM CLIENT =================
-const client = new TelegramClient(
-  new StringSession(TG_SESSION),
-  TG_API_ID,
-  TG_API_HASH,
-  { connectionRetries: 5 }
-);
-
-(async () => {
-  await client.connect();
-  console.log("✅ Telegram Connected");
-})();
 
 // ================= HOME =================
 app.get("/", (req, res) => {
@@ -77,46 +56,56 @@ app.post("/telegram", async (req, res) => {
 
   try {
     console.log("\n🔥 NEW UPDATE");
-    console.log(JSON.stringify(req.body, null, 2));
 
     const msg =
       req.body.message ||
       req.body.channel_post ||
       req.body.edited_message;
 
-    if (!msg) {
-      console.log("❌ NO MESSAGE");
-      return;
-    }
+    if (!msg) return;
 
-    console.log("📩 CHAT ID:", msg.chat?.id);
+    console.log("📩 CHAT ID:", msg.chat.id);
 
     const file =
       msg.video ||
       msg.document ||
       msg.animation ||
-      msg.audio ||
-      msg.photo?.[msg.photo.length - 1];
+      msg.audio;
 
     if (!file) {
-      console.log("❌ NO FILE FOUND");
+      console.log("❌ NO FILE");
       return;
     }
 
-    console.log("🎬 FILE:", file.file_name || "media");
+    console.log("🎬 FILE RECEIVED");
 
-    const messages = await client.getMessages(msg.chat.id, {
-      ids: msg.message_id
+    // ================= GET FILE PATH FROM TELEGRAM =================
+    const fileRes = await axios.get(
+      `https://api.telegram.org/bot${BOT_TOKEN}/getFile`,
+      {
+        params: { file_id: file.file_id }
+      }
+    );
+
+    if (!fileRes.data.ok) {
+      console.log("❌ getFile FAILED");
+      return;
+    }
+
+    const filePath = fileRes.data.result.file_path;
+
+    console.log("📂 FILE PATH:", filePath);
+
+    // ================= DOWNLOAD FILE =================
+    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+
+    console.log("📥 DOWNLOADING FROM TELEGRAM CDN...");
+
+    const tgFile = await axios.get(fileUrl, {
+      responseType: "arraybuffer"
     });
 
-    if (!messages || !messages[0]) {
-      console.log("❌ TELEGRAM MESSAGE NOT FOUND");
-      return;
-    }
-
-    console.log("📥 DOWNLOADING...");
-
-    const buffer = await client.downloadMedia(messages[0]);
+    const buffer = tgFile.data;
 
     if (!buffer || buffer.length === 0) {
       console.log("❌ EMPTY BUFFER");
@@ -125,11 +114,13 @@ app.post("/telegram", async (req, res) => {
 
     console.log("📦 SIZE:", buffer.length);
 
+    // ================= FILE NAME =================
     const fileName = (file.file_name || "movie.mp4")
       .replace(/[^a-zA-Z0-9.\-_]/g, "_");
 
     const key = `${Date.now()}-${fileName}`;
 
+    // ================= UPLOAD TO R2 =================
     console.log("⬆ UPLOADING TO R2...");
 
     const uploadRes = await axios.put(
@@ -145,10 +136,8 @@ app.post("/telegram", async (req, res) => {
       }
     );
 
-    console.log("R2 RESPONSE:", uploadRes.data);
-
     if (!uploadRes.data?.success) {
-      console.log("❌ R2 UPLOAD FAILED");
+      console.log("❌ R2 FAILED");
       return;
     }
 
@@ -164,9 +153,7 @@ app.post("/telegram", async (req, res) => {
     console.log("🔗 LINK:", link);
 
     // ================= SEND MESSAGE =================
-    console.log("📤 SENDING MESSAGE...");
-
-    const botRes = await axios.post(
+    await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
         chat_id: msg.chat.id,
@@ -174,10 +161,9 @@ app.post("/telegram", async (req, res) => {
       }
     );
 
-    console.log("📤 BOT RESPONSE:", botRes.data);
-
+    console.log("📤 SENT");
   } catch (err) {
-    console.log("❌ ERROR FULL:", err);
+    console.log("❌ ERROR:", err.message);
   }
 });
 
