@@ -64,8 +64,6 @@ app.post("/telegram", async (req, res) => {
 
     if (!msg) return;
 
-    console.log("📩 CHAT ID:", msg.chat.id);
-
     const file =
       msg.video ||
       msg.document ||
@@ -79,7 +77,16 @@ app.post("/telegram", async (req, res) => {
 
     console.log("🎬 FILE RECEIVED");
 
-    // ================= GET FILE PATH FROM TELEGRAM =================
+    // 🔥 SAFETY LIMIT (you can increase later)
+    if (file.file_size > 80 * 1024 * 1024) {
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        chat_id: msg.chat.id,
+        text: "❌ File too large (max ~80MB on Render)"
+      });
+      return;
+    }
+
+    // ================= GET FILE PATH =================
     const fileRes = await axios.get(
       `https://api.telegram.org/bot${BOT_TOKEN}/getFile`,
       {
@@ -94,43 +101,32 @@ app.post("/telegram", async (req, res) => {
 
     const filePath = fileRes.data.result.file_path;
 
-    console.log("📂 FILE PATH:", filePath);
-
-    // ================= DOWNLOAD FILE =================
     const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
 
-    console.log("📥 DOWNLOADING FROM TELEGRAM CDN...");
+    console.log("📥 STREAMING FROM TELEGRAM...");
 
-    const tgFile = await axios.get(fileUrl, {
-      responseType: "arraybuffer"
+    // ================= STREAM DOWNLOAD =================
+    const tgStream = await axios({
+      url: fileUrl,
+      method: "GET",
+      responseType: "stream"
     });
 
-    const buffer = tgFile.data;
-
-    if (!buffer || buffer.length === 0) {
-      console.log("❌ EMPTY BUFFER");
-      return;
-    }
-
-    console.log("📦 SIZE:", buffer.length);
-
-    // ================= FILE NAME =================
     const fileName = (file.file_name || "movie.mp4")
       .replace(/[^a-zA-Z0-9.\-_]/g, "_");
 
     const key = `${Date.now()}-${fileName}`;
 
-    // ================= UPLOAD TO R2 =================
-    console.log("⬆ UPLOADING TO R2...");
+    console.log("⬆ STREAM UPLOADING TO R2...");
 
+    // ================= STREAM UPLOAD =================
     const uploadRes = await axios.put(
       `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/objects/${key}`,
-      buffer,
+      tgStream.data,
       {
         headers: {
           Authorization: `Bearer ${CF_API_TOKEN}`,
-          "Content-Type": "video/mp4",
-          "Content-Length": buffer.length
+          "Content-Type": "video/mp4"
         },
         maxBodyLength: Infinity
       }
@@ -152,7 +148,6 @@ app.post("/telegram", async (req, res) => {
 
     console.log("🔗 LINK:", link);
 
-    // ================= SEND MESSAGE =================
     await axios.post(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
