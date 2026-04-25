@@ -59,7 +59,7 @@ app.get("/watch/:id", async (req, res) => {
 
 // ================= TELEGRAM WEBHOOK =================
 app.post("/telegram", async (req, res) => {
-  res.sendStatus(200); // IMPORTANT
+  res.sendStatus(200); // VERY IMPORTANT
 
   try {
     console.log("\n🔥 NEW UPDATE");
@@ -82,7 +82,6 @@ app.post("/telegram", async (req, res) => {
       msg.animation ||
       msg.audio;
 
-    // ================= FILE VALIDATION =================
     if (!file || !file.file_id) {
       console.log("❌ INVALID FILE");
       return;
